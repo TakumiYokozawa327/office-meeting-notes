@@ -1,0 +1,421 @@
+'use client'
+
+import { useState, useCallback, useEffect, useRef } from 'react'
+import { Theme, ThemeStatus, TranscriptEntry, Suggestion, ThemeCoverage, MeetingFeedback, MeetingContext, SessionRecord, DEFAULT_THEMES } from '@/types/meeting'
+import { useDeepgramTranscription } from '@/hooks/useDeepgramTranscription'
+import { loadProjectHistory, saveSessionRecord } from '@/lib/projectHistory'
+import { LayoutList, Sparkles, FileText, Mic } from 'lucide-react'
+import RecordingControls, { RecordingMode } from './RecordingControls'
+import ThemePanel from './ThemePanel'
+import SuggestionsPanel from './SuggestionsPanel'
+import TranscriptPanel from './TranscriptPanel'
+import NotesModal from './NotesModal'
+import QuestionPromptOverlay from './QuestionPromptOverlay'
+import ProjectSelector from './ProjectSelector'
+
+type MobileTab = 'themes' | 'suggestions' | 'transcript'
+
+export default function MeetingRoom() {
+  const [themes, setThemes] = useState<Theme[]>(DEFAULT_THEMES)
+  const [transcript, setTranscript] = useState<TranscriptEntry[]>([])
+  const [suggestions, setSuggestions] = useState<Suggestion[]>([])
+  const [notes, setNotes] = useState<string | null>(null)
+  const [feedback, setFeedback] = useState<MeetingFeedback | null>(null)
+  const [keyDecisions, setKeyDecisions] = useState<string[]>([])
+  const [openQuestions, setOpenQuestions] = useState<string[]>([])
+  const [isGeneratingNotes, setIsGeneratingNotes] = useState(false)
+  const [promptQuestion, setPromptQuestion] = useState<string | null>(null)
+  const [isLoadingSuggestions, setIsLoadingSuggestions] = useState(false)
+  const [duration, setDuration] = useState(0)
+  const [coverage, setCoverage] = useState<ThemeCoverage[]>([])
+  const [mode, setMode] = useState<RecordingMode>('normal')
+  const [meetingContext, setMeetingContext] = useState<MeetingContext | null>(null)
+  const [showProjectSelector, setShowProjectSelector] = useState(false)
+  const [activeTab, setActiveTab] = useState<MobileTab>('suggestions')
+  const [showTranscript, setShowTranscript] = useState(true)
+
+  const timerRef = useRef<NodeJS.Timeout | null>(null)
+  const suggestionDebounceRef = useRef<NodeJS.Timeout | null>(null)
+  const coverageDebounceRef = useRef<NodeJS.Timeout | null>(null)
+  const periodicSuggestionRef = useRef<NodeJS.Timeout | null>(null)
+  const recentTranscriptRef = useRef<string>('')
+  const lastSuggestionContentRef = useRef<string>('')
+  const isFetchingSuggestionsRef = useRef(false)
+  const fullTranscriptRef = useRef<TranscriptEntry[]>([])
+  const meetingContextRef = useRef<MeetingContext | null>(null)
+
+  const handleFinalResult = useCallback((text: string, speakerId: number) => {
+    const entry: TranscriptEntry = {
+      id: `entry-${Date.now()}`,
+      text,
+      speakerId,
+      timestamp: new Date(),
+    }
+    fullTranscriptRef.current = [...fullTranscriptRef.current, entry]
+    setTranscript(fullTranscriptRef.current)
+
+    // 直近1500文字のみ保持（古いものは捨てる）
+    const combined = recentTranscriptRef.current ? `${recentTranscriptRef.current}\n${text}` : text
+    recentTranscriptRef.current = combined.length > 1500 ? combined.slice(-1500) : combined
+
+    if (suggestionDebounceRef.current) clearTimeout(suggestionDebounceRef.current)
+    suggestionDebounceRef.current = setTimeout(() => {
+      fetchSuggestions(recentTranscriptRef.current)
+    }, 3000)
+
+    if (coverageDebounceRef.current) clearTimeout(coverageDebounceRef.current)
+    coverageDebounceRef.current = setTimeout(() => {
+      fetchCoverage(fullTranscriptRef.current)
+    }, 5000)
+  }, [])
+
+  const { isListening, interimTranscript, interimSpeakerId, start, stop, isSupported } =
+    useDeepgramTranscription(handleFinalResult, mode)
+
+  const fetchSuggestions = async (recentTranscript: string, targetThemeId?: string) => {
+    if (isFetchingSuggestionsRef.current) return
+    isFetchingSuggestionsRef.current = true
+    lastSuggestionContentRef.current = recentTranscript
+    setIsLoadingSuggestions(true)
+    let firstArrived = false
+
+    try {
+      const res = await fetch('/api/suggestions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          recentTranscript,
+          themes,
+          priorHistory: meetingContextRef.current?.priorHistory ?? [],
+          targetThemeId,
+        }),
+      })
+
+      if (!res.body) return
+
+      const reader = res.body.getReader()
+      const decoder = new TextDecoder()
+      let buffer = ''
+
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+
+        buffer += decoder.decode(value, { stream: true })
+        const lines = buffer.split('\n')
+        buffer = lines.pop() ?? ''
+
+        for (const line of lines) {
+          const trimmed = line.trim()
+          if (!trimmed) continue
+          try {
+            const suggestion = JSON.parse(trimmed) as Suggestion
+            if (!firstArrived) {
+              firstArrived = true
+              // 既存サジェストを最初の新サジェスト到着時に差し替える（スケルトン→空の遷移を避ける）
+              setSuggestions((prev) => [...prev.filter((s) => s.status !== 'pending'), suggestion])
+              setActiveTab('suggestions')
+            } else {
+              setSuggestions((prev) => [...prev, suggestion])
+            }
+          } catch {
+            // skip malformed line
+          }
+        }
+      }
+    } catch (err) {
+      console.error('Failed to fetch suggestions:', err)
+    } finally {
+      isFetchingSuggestionsRef.current = false
+      setIsLoadingSuggestions(false)
+    }
+  }
+
+  const handleRequestSuggestion = (themeId: string) => {
+    if (suggestionDebounceRef.current) clearTimeout(suggestionDebounceRef.current)
+    fetchSuggestions(recentTranscriptRef.current, themeId)
+  }
+
+  const fetchCoverage = async (currentTranscript: TranscriptEntry[]) => {
+    try {
+      // 最新40件のみ送信してタイムアウトを防ぐ
+      const res = await fetch('/api/analyze-coverage', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ transcript: currentTranscript.slice(-40), themes }),
+      })
+      const data = await res.json()
+      // 空配列が返っても既存のcoverageをリセットしない
+      if (data.coverage?.length > 0) setCoverage(data.coverage)
+    } catch (err) {
+      console.error('Failed to fetch coverage:', err)
+    }
+  }
+
+  const handleToggleRecording = async () => {
+    if (isListening) {
+      stop()
+      if (timerRef.current) clearInterval(timerRef.current)
+      if (periodicSuggestionRef.current) clearInterval(periodicSuggestionRef.current)
+    } else {
+      try {
+        await start()
+        timerRef.current = setInterval(() => setDuration((d) => d + 1), 1000)
+        periodicSuggestionRef.current = setInterval(() => {
+          const current = recentTranscriptRef.current
+          if (current && current !== lastSuggestionContentRef.current) {
+            fetchSuggestions(current)
+          }
+        }, 20000)
+      } catch (err) {
+        console.error('Failed to start recording:', err)
+      }
+    }
+  }
+
+  const handleProjectSelected = (context: MeetingContext) => {
+    const priorHistory = loadProjectHistory(context.project.id)
+    const contextWithHistory = { ...context, priorHistory }
+    meetingContextRef.current = contextWithHistory
+    setMeetingContext(contextWithHistory)
+    setShowProjectSelector(false)
+  }
+
+  const handleThemeStatusChange = (themeId: string, status: ThemeStatus) => {
+    setThemes((prev) =>
+      prev.map((t) => (t.id === themeId ? { ...t, status } : t))
+    )
+  }
+
+  const handleUseSuggestion = (id: string) => {
+    const suggestion = suggestions.find((s) => s.id === id)
+    if (suggestion) setPromptQuestion(suggestion.question)
+    setSuggestions((prev) =>
+      prev.map((s) => (s.id === id ? { ...s, status: 'used' } : s))
+    )
+  }
+
+  const handleSkipSuggestion = (id: string) => {
+    setSuggestions((prev) =>
+      prev.map((s) => (s.id === id ? { ...s, status: 'skipped' } : s))
+    )
+  }
+
+  const handleGenerateNotes = async () => {
+    setIsGeneratingNotes(true)
+    try {
+      const [notesRes, feedbackRes] = await Promise.all([
+        fetch('/api/generate-notes', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ transcript, themes }),
+        }),
+        fetch('/api/generate-feedback', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ transcript, themes, coverage }),
+        }),
+      ])
+      const [notesData, feedbackData] = await Promise.all([notesRes.json(), feedbackRes.json()])
+      if (notesData.notes) setNotes(notesData.notes)
+      if (notesData.keyDecisions) setKeyDecisions(notesData.keyDecisions)
+      if (notesData.openQuestions) setOpenQuestions(notesData.openQuestions)
+      if (feedbackData.feedback) setFeedback(feedbackData.feedback)
+
+      const ctx = meetingContextRef.current
+      if (ctx) {
+        const record: SessionRecord = {
+          sessionId: `session-${Date.now()}`,
+          date: new Date().toISOString(),
+          keyDecisions: notesData.keyDecisions ?? [],
+          openQuestions: notesData.openQuestions ?? [],
+          coverage,
+          confirmedThemeIds: themes.filter((t) => t.status === 'confirmed').map((t) => t.id),
+        }
+        saveSessionRecord(ctx.project.id, record)
+        const updated = { ...ctx, priorHistory: [...(ctx.priorHistory ?? []), record] }
+        meetingContextRef.current = updated
+        setMeetingContext(updated)
+      }
+    } catch (err) {
+      console.error('Failed to generate notes/feedback:', err)
+    } finally {
+      setIsGeneratingNotes(false)
+    }
+  }
+
+  useEffect(() => {
+    if (isListening) setActiveTab('suggestions')
+  }, [isListening])
+
+  useEffect(() => {
+    return () => {
+      if (timerRef.current) clearInterval(timerRef.current)
+      if (suggestionDebounceRef.current) clearTimeout(suggestionDebounceRef.current)
+      if (coverageDebounceRef.current) clearTimeout(coverageDebounceRef.current)
+      if (periodicSuggestionRef.current) clearInterval(periodicSuggestionRef.current)
+    }
+  }, [])
+
+  return (
+    <div className="flex flex-col h-screen bg-slate-50">
+      <RecordingControls
+        isRecording={isListening}
+        duration={duration}
+        transcriptCount={transcript.length}
+        isGeneratingNotes={isGeneratingNotes}
+        isSupported={isSupported}
+        mode={mode}
+        context={meetingContext}
+        onModeChange={setMode}
+        onToggleRecording={handleToggleRecording}
+        onGenerateNotes={handleGenerateNotes}
+        onOpenProjectSelector={() => setShowProjectSelector(true)}
+      />
+
+      {/* デスクトップ: 文字起こし折りたたみ対応 */}
+      <div
+        className={`hidden md:grid flex-1 overflow-hidden ${showTranscript ? 'grid-cols-[280px_1fr_300px]' : 'grid-cols-[280px_1fr_28px]'}`}
+        style={{ minHeight: 0 }}
+      >
+        <div className="border-r border-slate-200 bg-white overflow-hidden">
+          <ThemePanel themes={themes} coverage={coverage} onStatusChange={handleThemeStatusChange} onRequestSuggestion={handleRequestSuggestion} />
+        </div>
+        <div className="overflow-hidden">
+          <SuggestionsPanel
+            suggestions={suggestions}
+            coverage={coverage}
+            isLoading={isLoadingSuggestions}
+            priorHistory={meetingContext?.priorHistory}
+            hasContext={meetingContext !== null}
+            onUse={handleUseSuggestion}
+            onSkip={handleSkipSuggestion}
+            onLinkProject={() => setShowProjectSelector(true)}
+          />
+        </div>
+        {showTranscript ? (
+          <div className="border-l border-slate-200 bg-white overflow-hidden">
+            <TranscriptPanel
+              transcript={transcript}
+              interimTranscript={interimTranscript}
+              interimSpeakerId={interimSpeakerId}
+              isRecording={isListening}
+              onClose={() => setShowTranscript(false)}
+            />
+          </div>
+        ) : (
+          <button
+            onClick={() => setShowTranscript(true)}
+            className="border-l border-slate-200 bg-white hover:bg-slate-50 transition-colors flex flex-col items-center justify-center gap-1.5 text-slate-400 hover:text-slate-600"
+            title="文字起こしを開く"
+          >
+            <Mic size={13} />
+            <span className="text-[10px] font-medium [writing-mode:vertical-rl]">文字起こし</span>
+          </button>
+        )}
+      </div>
+
+      {/* モバイル: タブ切り替え */}
+      <div className="flex md:hidden flex-col flex-1 overflow-hidden">
+        <div className="flex-1 overflow-hidden bg-white">
+          {activeTab === 'themes' && (
+            <ThemePanel themes={themes} coverage={coverage} onStatusChange={handleThemeStatusChange} onRequestSuggestion={isListening ? handleRequestSuggestion : undefined} />
+          )}
+          {activeTab === 'suggestions' && (
+            <SuggestionsPanel
+              suggestions={suggestions}
+              coverage={coverage}
+              isLoading={isLoadingSuggestions}
+              priorHistory={meetingContext?.priorHistory}
+              hasContext={meetingContext !== null}
+              onUse={handleUseSuggestion}
+              onSkip={handleSkipSuggestion}
+              onLinkProject={() => setShowProjectSelector(true)}
+            />
+          )}
+          {activeTab === 'transcript' && (
+            <TranscriptPanel
+              transcript={transcript}
+              interimTranscript={interimTranscript}
+              interimSpeakerId={interimSpeakerId}
+              isRecording={isListening}
+            />
+          )}
+        </div>
+
+        {/* 下部タブバー */}
+        <div className="border-t border-slate-200 bg-white grid grid-cols-3 shrink-0 safe-bottom">
+          {(
+            [
+              {
+                id: 'themes' as MobileTab,
+                icon: LayoutList,
+                label: 'テーマ',
+                badge: `${themes.filter((t) => t.status === 'confirmed').length}/${themes.length}`,
+              },
+              {
+                id: 'suggestions' as MobileTab,
+                icon: Sparkles,
+                label: 'AI提案',
+                badge: suggestions.filter((s) => s.status === 'pending').length > 0
+                  ? String(suggestions.filter((s) => s.status === 'pending').length)
+                  : null,
+              },
+              {
+                id: 'transcript' as MobileTab,
+                icon: FileText,
+                label: '文字起こし',
+                badge: transcript.length > 0 ? String(transcript.length) : null,
+              },
+            ] as const
+          ).map(({ id, icon: Icon, label, badge }) => (
+            <button
+              key={id}
+              onClick={() => setActiveTab(id)}
+              className={`flex flex-col items-center justify-center gap-0.5 py-2.5 text-[11px] font-medium transition-colors relative ${
+                activeTab === id
+                  ? 'text-indigo-600'
+                  : 'text-slate-400'
+              }`}
+            >
+              {activeTab === id && (
+                <span className="absolute top-0 inset-x-4 h-0.5 bg-indigo-600 rounded-full" />
+              )}
+              <Icon size={18} />
+              <span>{label}</span>
+              {badge && (
+                <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-full leading-none ${
+                  activeTab === id ? 'bg-indigo-100 text-indigo-600' : 'bg-slate-100 text-slate-500'
+                }`}>
+                  {badge}
+                </span>
+              )}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {notes && (
+        <NotesModal
+          notes={notes}
+          feedback={feedback}
+          keyDecisions={keyDecisions}
+          openQuestions={openQuestions}
+          onClose={() => { setNotes(null); setFeedback(null); setKeyDecisions([]); setOpenQuestions([]) }}
+        />
+      )}
+      {promptQuestion && (
+        <QuestionPromptOverlay
+          question={promptQuestion}
+          onClose={() => setPromptQuestion(null)}
+        />
+      )}
+      {showProjectSelector && (
+        <ProjectSelector
+          onStart={handleProjectSelected}
+          onClose={() => setShowProjectSelector(false)}
+        />
+      )}
+    </div>
+  )
+}
