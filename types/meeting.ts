@@ -75,8 +75,17 @@ export interface Suggestion {
   themeName: string
   question: string
   reason?: string
-  status: 'pending' | 'used' | 'skipped'
+  status: 'pending' | 'used' | 'skipped' | 'deferred'
   isFallback?: boolean
+}
+
+export interface AIInsight {
+  purpose?: string
+  budget?: string
+  decisionMaker?: string
+  moveDate?: string
+  companySize?: string
+  missingItems: string[]
 }
 
 export interface MeetingState {

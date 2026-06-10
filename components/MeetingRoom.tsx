@@ -1,19 +1,19 @@
 'use client'
 
 import { useState, useCallback, useEffect, useRef } from 'react'
-import { Theme, ThemeStatus, TranscriptEntry, Suggestion, ThemeCoverage, MeetingFeedback, MeetingContext, SessionRecord, DEFAULT_THEMES } from '@/types/meeting'
+import { Theme, ThemeStatus, TranscriptEntry, Suggestion, ThemeCoverage, MeetingFeedback, MeetingContext, SessionRecord, AIInsight, DEFAULT_THEMES } from '@/types/meeting'
 import { useDeepgramTranscription } from '@/hooks/useDeepgramTranscription'
 import { loadProjectHistory, saveSessionRecord } from '@/lib/projectHistory'
-import { LayoutList, Sparkles, FileText, Mic } from 'lucide-react'
+import { Flame, Brain, Sparkles } from 'lucide-react'
 import RecordingControls, { RecordingMode } from './RecordingControls'
-import ThemePanel from './ThemePanel'
-import SuggestionsPanel from './SuggestionsPanel'
-import TranscriptPanel from './TranscriptPanel'
+import HearingProgress from './HearingProgress'
+import HeroSuggestion from './HeroSuggestion'
+import AIInsightPanel from './AIInsightPanel'
 import NotesModal from './NotesModal'
 import QuestionPromptOverlay from './QuestionPromptOverlay'
 import ProjectSelector from './ProjectSelector'
 
-type MobileTab = 'themes' | 'suggestions' | 'transcript'
+type MobileTab = 'progress' | 'suggestion' | 'insight'
 
 function buildFallbackSuggestions(themes: Theme[], targetThemeId?: string): Suggestion[] {
   if (targetThemeId) {
@@ -55,11 +55,12 @@ export default function MeetingRoom() {
   const [isLoadingSuggestions, setIsLoadingSuggestions] = useState(false)
   const [duration, setDuration] = useState(0)
   const [coverage, setCoverage] = useState<ThemeCoverage[]>([])
+  const [insight, setInsight] = useState<AIInsight | null>(null)
+  const [isLoadingInsight, setIsLoadingInsight] = useState(false)
   const [mode, setMode] = useState<RecordingMode>('normal')
   const [meetingContext, setMeetingContext] = useState<MeetingContext | null>(null)
   const [showProjectSelector, setShowProjectSelector] = useState(false)
-  const [activeTab, setActiveTab] = useState<MobileTab>('suggestions')
-  const [showTranscript, setShowTranscript] = useState(true)
+  const [activeTab, setActiveTab] = useState<MobileTab>('suggestion')
 
   const themesRef = useRef<Theme[]>(themes)
   themesRef.current = themes
@@ -84,7 +85,6 @@ export default function MeetingRoom() {
     fullTranscriptRef.current = [...fullTranscriptRef.current, entry]
     setTranscript(fullTranscriptRef.current)
 
-    // 直近1500文字のみ保持（古いものは捨てる）
     const combined = recentTranscriptRef.current ? `${recentTranscriptRef.current}\n${text}` : text
     recentTranscriptRef.current = combined.length > 1500 ? combined.slice(-1500) : combined
 
@@ -149,9 +149,8 @@ export default function MeetingRoom() {
             const suggestion = JSON.parse(trimmed) as Suggestion
             if (!firstArrived) {
               firstArrived = true
-              // 既存サジェストを最初の新サジェスト到着時に差し替える（スケルトン→空の遷移を避ける）
               setSuggestions((prev) => [...prev.filter((s) => s.status !== 'pending'), suggestion])
-              setActiveTab('suggestions')
+              setActiveTab('suggestion')
             } else {
               setSuggestions((prev) => [...prev, suggestion])
             }
@@ -175,17 +174,36 @@ export default function MeetingRoom() {
 
   const fetchCoverage = async (currentTranscript: TranscriptEntry[]) => {
     try {
-      // 最新40件のみ送信してタイムアウトを防ぐ
       const res = await fetch('/api/analyze-coverage', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ transcript: currentTranscript.slice(-40), themes }),
       })
       const data = await res.json()
-      // 空配列が返っても既存のcoverageをリセットしない
       if (data.coverage?.length > 0) setCoverage(data.coverage)
     } catch (err) {
       console.error('Failed to fetch coverage:', err)
+    }
+
+    if (fullTranscriptRef.current.length >= 3) {
+      fetchInsight(fullTranscriptRef.current)
+    }
+  }
+
+  const fetchInsight = async (currentTranscript: TranscriptEntry[]) => {
+    setIsLoadingInsight(true)
+    try {
+      const res = await fetch('/api/insight', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ transcript: currentTranscript }),
+      })
+      const data = await res.json()
+      if (data.insight) setInsight(data.insight)
+    } catch (err) {
+      console.error('Failed to fetch insight:', err)
+    } finally {
+      setIsLoadingInsight(false)
     }
   }
 
@@ -232,7 +250,13 @@ export default function MeetingRoom() {
     )
   }
 
-  const handleSkipSuggestion = (id: string) => {
+  const handleDeferSuggestion = (id: string) => {
+    setSuggestions((prev) =>
+      prev.map((s) => (s.id === id ? { ...s, status: 'deferred' } : s))
+    )
+  }
+
+  const handleDismissSuggestion = (id: string) => {
     setSuggestions((prev) =>
       prev.map((s) => (s.id === id ? { ...s, status: 'skipped' } : s))
     )
@@ -282,7 +306,7 @@ export default function MeetingRoom() {
   }
 
   useEffect(() => {
-    if (isListening) setActiveTab('suggestions')
+    if (isListening) setActiveTab('suggestion')
   }, [isListening])
 
   useEffect(() => {
@@ -293,6 +317,8 @@ export default function MeetingRoom() {
       if (periodicSuggestionRef.current) clearInterval(periodicSuggestionRef.current)
     }
   }, [])
+
+  const usedCount = suggestions.filter((s) => s.status === 'used').length
 
   return (
     <div className="flex flex-col h-screen bg-slate-50">
@@ -310,109 +336,82 @@ export default function MeetingRoom() {
         onOpenProjectSelector={() => setShowProjectSelector(true)}
       />
 
-      {/* デスクトップ: 文字起こし折りたたみ対応 */}
-      <div
-        className={`hidden md:grid flex-1 overflow-hidden ${showTranscript ? 'grid-cols-[280px_1fr_300px]' : 'grid-cols-[280px_1fr_28px]'}`}
-        style={{ minHeight: 0 }}
-      >
+      {/* デスクトップ */}
+      <div className="hidden md:grid flex-1 overflow-hidden grid-cols-[240px_1fr_260px]" style={{ minHeight: 0 }}>
         <div className="border-r border-slate-200 bg-white overflow-hidden">
-          <ThemePanel themes={themes} coverage={coverage} onStatusChange={handleThemeStatusChange} onRequestSuggestion={handleRequestSuggestion} />
+          <HearingProgress
+            themes={themes}
+            coverage={coverage}
+            onStatusChange={handleThemeStatusChange}
+            onRequestSuggestion={handleRequestSuggestion}
+          />
         </div>
         <div className="overflow-hidden">
-          <SuggestionsPanel
+          <HeroSuggestion
             suggestions={suggestions}
-            coverage={coverage}
             isLoading={isLoadingSuggestions}
-            priorHistory={meetingContext?.priorHistory}
             hasContext={meetingContext !== null}
+            usedCount={usedCount}
             onUse={handleUseSuggestion}
-            onSkip={handleSkipSuggestion}
+            onDefer={handleDeferSuggestion}
+            onDismiss={handleDismissSuggestion}
             onLinkProject={() => setShowProjectSelector(true)}
           />
         </div>
-        {showTranscript ? (
-          <div className="border-l border-slate-200 bg-white overflow-hidden">
-            <TranscriptPanel
-              transcript={transcript}
-              interimTranscript={interimTranscript}
-              interimSpeakerId={interimSpeakerId}
-              isRecording={isListening}
-              onClose={() => setShowTranscript(false)}
-            />
-          </div>
-        ) : (
-          <button
-            onClick={() => setShowTranscript(true)}
-            className="border-l border-slate-200 bg-white hover:bg-slate-50 transition-colors flex flex-col items-center justify-center gap-1.5 text-slate-400 hover:text-slate-600"
-            title="文字起こしを開く"
-          >
-            <Mic size={13} />
-            <span className="text-[10px] font-medium [writing-mode:vertical-rl]">文字起こし</span>
-          </button>
-        )}
+        <div className="overflow-hidden">
+          <AIInsightPanel
+            insight={insight}
+            transcript={transcript}
+            isRecording={isListening}
+            isLoading={isLoadingInsight}
+          />
+        </div>
       </div>
 
-      {/* モバイル: タブ切り替え */}
+      {/* モバイル */}
       <div className="flex md:hidden flex-col flex-1 overflow-hidden">
         <div className="flex-1 overflow-hidden bg-white">
-          {activeTab === 'themes' && (
-            <ThemePanel themes={themes} coverage={coverage} onStatusChange={handleThemeStatusChange} onRequestSuggestion={isListening ? handleRequestSuggestion : undefined} />
-          )}
-          {activeTab === 'suggestions' && (
-            <SuggestionsPanel
-              suggestions={suggestions}
+          {activeTab === 'progress' && (
+            <HearingProgress
+              themes={themes}
               coverage={coverage}
+              onStatusChange={handleThemeStatusChange}
+              onRequestSuggestion={isListening ? handleRequestSuggestion : undefined}
+            />
+          )}
+          {activeTab === 'suggestion' && (
+            <HeroSuggestion
+              suggestions={suggestions}
               isLoading={isLoadingSuggestions}
-              priorHistory={meetingContext?.priorHistory}
               hasContext={meetingContext !== null}
+              usedCount={usedCount}
               onUse={handleUseSuggestion}
-              onSkip={handleSkipSuggestion}
+              onDefer={handleDeferSuggestion}
+              onDismiss={handleDismissSuggestion}
               onLinkProject={() => setShowProjectSelector(true)}
             />
           )}
-          {activeTab === 'transcript' && (
-            <TranscriptPanel
+          {activeTab === 'insight' && (
+            <AIInsightPanel
+              insight={insight}
               transcript={transcript}
-              interimTranscript={interimTranscript}
-              interimSpeakerId={interimSpeakerId}
               isRecording={isListening}
+              isLoading={isLoadingInsight}
             />
           )}
         </div>
 
-        {/* 下部タブバー */}
         <div className="border-t border-slate-200 bg-white grid grid-cols-3 shrink-0 safe-bottom">
-          {(
-            [
-              {
-                id: 'themes' as MobileTab,
-                icon: LayoutList,
-                label: 'テーマ',
-                badge: `${themes.filter((t) => t.status === 'confirmed').length}/${themes.length}`,
-              },
-              {
-                id: 'suggestions' as MobileTab,
-                icon: Sparkles,
-                label: 'AI提案',
-                badge: suggestions.filter((s) => s.status === 'pending').length > 0
-                  ? String(suggestions.filter((s) => s.status === 'pending').length)
-                  : null,
-              },
-              {
-                id: 'transcript' as MobileTab,
-                icon: FileText,
-                label: '文字起こし',
-                badge: transcript.length > 0 ? String(transcript.length) : null,
-              },
-            ] as const
-          ).map(({ id, icon: Icon, label, badge }) => (
+          {([
+            { id: 'progress' as MobileTab,   icon: Flame,    label: '充実度',   badge: null },
+            { id: 'suggestion' as MobileTab, icon: Sparkles, label: '次の質問', badge: suggestions.filter((s) => s.status === 'pending').length > 0 ? String(suggestions.filter((s) => s.status === 'pending').length) : null },
+            { id: 'insight' as MobileTab,    icon: Brain,    label: 'AI理解',   badge: insight?.missingItems?.length ? String(insight.missingItems.length) : null },
+          ]).map(({ id, icon: Icon, label, badge }) => (
             <button
               key={id}
               onClick={() => setActiveTab(id)}
               className={`flex flex-col items-center justify-center gap-0.5 py-2.5 text-[11px] font-medium transition-colors relative ${
-                activeTab === id
-                  ? 'text-indigo-600'
-                  : 'text-slate-400'
+                activeTab === id ? 'text-indigo-600' : 'text-slate-400'
               }`}
             >
               {activeTab === id && (
