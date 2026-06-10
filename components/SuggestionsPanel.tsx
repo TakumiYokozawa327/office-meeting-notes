@@ -24,54 +24,21 @@ export default function SuggestionsPanel({
   onSkip,
   onLinkProject,
 }: SuggestionsPanelProps) {
-  const [activeIndex, setActiveIndex] = useState(0)
   const [animatingIds, setAnimatingIds] = useState<Set<string>>(new Set())
   const prevPendingIdsRef = useRef<Set<string>>(new Set())
 
   const pending = suggestions.filter((s) => s.status === 'pending')
   const used = suggestions.filter((s) => s.status === 'used')
-  const current = pending[activeIndex] ?? pending[0]
 
-  const firstPendingId = pending[0]?.id
-  useEffect(() => {
-    setActiveIndex(0)
-  }, [firstPendingId])
-
-  useEffect(() => {
-    if (activeIndex >= pending.length && pending.length > 0) {
-      setActiveIndex(pending.length - 1)
-    }
-  }, [pending.length, activeIndex])
-
-  // 新着IDにアニメーションフラグを付ける
   useEffect(() => {
     const currentIds = new Set(pending.map((s) => s.id))
     const newIds = [...currentIds].filter((id) => !prevPendingIdsRef.current.has(id))
     prevPendingIdsRef.current = currentIds
-
     if (newIds.length === 0) return
     setAnimatingIds(new Set(newIds))
     const t = setTimeout(() => setAnimatingIds(new Set()), 600)
     return () => clearTimeout(t)
   }, [pending.map((s) => s.id).join(',')])
-
-  const advance = (currentId: string) => {
-    const idx = pending.findIndex((s) => s.id === currentId)
-    const next = pending.length > 1 ? Math.min(idx, pending.length - 2) : 0
-    setActiveIndex(next)
-  }
-
-  const handleUse = () => {
-    if (!current) return
-    advance(current.id)
-    onUse(current.id)
-  }
-
-  const handleSkip = () => {
-    if (!current) return
-    advance(current.id)
-    onSkip(current.id)
-  }
 
   const lastOpenQuestions =
     priorHistory && priorHistory.length > 0
@@ -82,15 +49,14 @@ export default function SuggestionsPanel({
     <div className="flex flex-col h-full bg-slate-50">
       <style>{`
         @keyframes suggestionFadeIn {
-          from { opacity: 0; }
-          to   { opacity: 1; }
+          from { opacity: 0; transform: translateY(-4px); }
+          to   { opacity: 1; transform: translateY(0); }
         }
         .suggestion-new {
           animation: suggestionFadeIn 0.3s ease-out;
         }
       `}</style>
 
-      {/* ヘッダー */}
       <div className="border-b border-slate-200 bg-white shrink-0">
         <div className="px-5 py-3 flex items-center gap-2">
           <Sparkles size={15} className="text-indigo-500" />
@@ -101,18 +67,12 @@ export default function SuggestionsPanel({
               生成中…
             </span>
           )}
-          <div className="ml-auto flex items-center gap-2">
-            {used.length > 0 && (
-              <span className="flex items-center gap-1 text-xs text-emerald-500 font-medium">
-                <Check size={11} /> {used.length}件採用済み
-              </span>
-            )}
-            {pending.length > 0 && (
-              <span className="text-xs text-slate-400">{activeIndex + 1} / {pending.length}</span>
-            )}
-          </div>
+          {used.length > 0 && (
+            <span className="flex items-center gap-1 text-xs text-emerald-500 font-medium ml-auto">
+              <Check size={11} /> {used.length}件採用済み
+            </span>
+          )}
         </div>
-        {/* 前回の積み残し — ヘッダー内に固定。ボディのカードレイアウトに影響させない */}
         {lastOpenQuestions.length > 0 && (
           <div className="px-5 pb-3">
             <div className="bg-violet-50 border border-violet-200 rounded-xl p-3">
@@ -131,13 +91,11 @@ export default function SuggestionsPanel({
         )}
       </div>
 
-      <div className="flex-1 overflow-y-auto flex flex-col p-4 gap-4">
-
-        {/* 空・ローディング中 */}
+      <div className="flex-1 overflow-y-auto flex flex-col p-4 gap-3">
         {pending.length === 0 && isLoading && (
           <div className="space-y-3">
-            {[1, 2].map((i) => (
-              <div key={i} className="h-40 bg-slate-200 rounded-2xl animate-pulse" />
+            {[1, 2, 3].map((i) => (
+              <div key={i} className="h-24 bg-slate-200 rounded-2xl animate-pulse" />
             ))}
           </div>
         )}
@@ -164,79 +122,57 @@ export default function SuggestionsPanel({
           </div>
         )}
 
-        {/* メイン提案カード */}
-        {current && (
-          <div className="flex-1 flex flex-col">
-            <div
-              className={`rounded-2xl shadow-sm border p-5 flex flex-col gap-3 ${
-                current.isFallback
-                  ? 'bg-slate-50 border-slate-200'
-                  : 'bg-white border-indigo-100'
-              } ${animatingIds.has(current.id) ? 'suggestion-new' : ''}`}
-            >
-              {/* テーマタグ */}
-              <div className="flex items-center gap-2 flex-wrap">
-                <span className="inline-flex items-center self-start text-xs font-medium text-indigo-600 bg-indigo-50 px-2.5 py-1 rounded-full">
-                  {current.themeName}
+        {pending.map((suggestion) => (
+          <div
+            key={suggestion.id}
+            className={`rounded-2xl border flex flex-col gap-2.5 p-4 ${
+              suggestion.isFallback
+                ? 'bg-slate-50 border-slate-200'
+                : 'bg-white border-indigo-100 shadow-sm'
+            } ${animatingIds.has(suggestion.id) ? 'suggestion-new' : ''}`}
+          >
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="inline-flex items-center text-xs font-medium text-indigo-600 bg-indigo-50 px-2.5 py-1 rounded-full">
+                {suggestion.themeName}
+              </span>
+              {suggestion.isFallback && (
+                <span className="inline-flex items-center gap-1 text-xs font-medium text-slate-400 bg-slate-200 px-2 py-0.5 rounded-full">
+                  <Lightbulb size={10} /> ヒント
                 </span>
-                {current.isFallback && (
-                  <span className="inline-flex items-center gap-1 text-xs font-medium text-slate-400 bg-slate-200 px-2 py-0.5 rounded-full">
-                    <Lightbulb size={10} /> ヒント
-                  </span>
-                )}
-              </div>
-
-              {/* 質問（主役） */}
-              <p className={`text-xl font-bold leading-snug ${current.isFallback ? 'text-slate-600' : 'text-slate-800'}`}>
-                {current.question}
-              </p>
-
-              {/* なぜ今聞く？ AI生成時のみ表示 */}
-              {current.reason && !current.isFallback && (
-                <div className="bg-amber-50 border border-amber-100 rounded-xl px-3.5 py-2.5">
-                  <p className="text-[11px] font-semibold text-amber-600 mb-1">なぜ今聞く？</p>
-                  <p className="text-xs text-amber-800 leading-relaxed">{current.reason}</p>
-                </div>
               )}
-
-              {/* アクション */}
-              <div className="flex gap-2 pt-1">
-                <button
-                  onClick={handleUse}
-                  className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-xl text-sm font-semibold transition-colors shadow-sm ${
-                    current.isFallback
-                      ? 'bg-slate-600 hover:bg-slate-700 text-white shadow-slate-100'
-                      : 'bg-emerald-500 hover:bg-emerald-600 text-white shadow-emerald-100'
-                  }`}
-                >
-                  <Check size={15} /> 採用して質問
-                </button>
-                <button
-                  onClick={handleSkip}
-                  className="flex items-center justify-center gap-1 px-4 py-2.5 rounded-xl text-sm font-medium text-slate-500 bg-slate-100 hover:bg-slate-200 transition-colors"
-                >
-                  <SkipForward size={14} />
-                </button>
-              </div>
             </div>
 
-            {/* ドットナビゲーション（常時スペース確保してカードがガクつかないようにする） */}
-            <div className="flex justify-center gap-2 mt-4 min-h-[8px]">
-              {pending.length > 1 && pending.map((s, i) => (
-                <button
-                  key={s.id}
-                  onClick={() => setActiveIndex(i)}
-                  className={`rounded-full transition-all ${
-                    i === activeIndex
-                      ? 'w-5 h-2 bg-indigo-500'
-                      : 'w-2 h-2 bg-slate-300 hover:bg-slate-400'
-                  }`}
-                />
-              ))}
+            <p className={`text-base font-bold leading-snug ${suggestion.isFallback ? 'text-slate-600' : 'text-slate-800'}`}>
+              {suggestion.question}
+            </p>
+
+            {suggestion.reason && !suggestion.isFallback && (
+              <div className="bg-amber-50 border border-amber-100 rounded-xl px-3 py-2">
+                <p className="text-[11px] font-semibold text-amber-600 mb-0.5">なぜ今聞く？</p>
+                <p className="text-xs text-amber-800 leading-relaxed">{suggestion.reason}</p>
+              </div>
+            )}
+
+            <div className="flex gap-2">
+              <button
+                onClick={() => onUse(suggestion.id)}
+                className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-xl text-sm font-semibold transition-colors ${
+                  suggestion.isFallback
+                    ? 'bg-slate-600 hover:bg-slate-700 text-white'
+                    : 'bg-emerald-500 hover:bg-emerald-600 text-white'
+                }`}
+              >
+                <Check size={14} /> 採用
+              </button>
+              <button
+                onClick={() => onSkip(suggestion.id)}
+                className="flex items-center justify-center px-3 py-2 rounded-xl text-sm font-medium text-slate-500 bg-slate-100 hover:bg-slate-200 transition-colors"
+              >
+                <SkipForward size={14} />
+              </button>
             </div>
           </div>
-        )}
-
+        ))}
       </div>
     </div>
   )

@@ -91,7 +91,7 @@ export default function MeetingRoom() {
     if (suggestionDebounceRef.current) clearTimeout(suggestionDebounceRef.current)
     suggestionDebounceRef.current = setTimeout(() => {
       fetchSuggestions(recentTranscriptRef.current)
-    }, 3000)
+    }, 1000)
 
     if (coverageDebounceRef.current) clearTimeout(coverageDebounceRef.current)
     coverageDebounceRef.current = setTimeout(() => {
