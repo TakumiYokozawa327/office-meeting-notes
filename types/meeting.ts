@@ -76,6 +76,7 @@ export interface Suggestion {
   question: string
   reason?: string
   status: 'pending' | 'used' | 'skipped'
+  isFallback?: boolean
 }
 
 export interface MeetingState {

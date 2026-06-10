@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef } from 'react'
 import { Suggestion, ThemeCoverage, SessionRecord } from '@/types/meeting'
-import { Sparkles, Check, Loader2, Clock, SkipForward } from 'lucide-react'
+import { Sparkles, Check, Loader2, Clock, SkipForward, Lightbulb } from 'lucide-react'
 
 interface SuggestionsPanelProps {
   suggestions: Suggestion[]
@@ -168,20 +168,31 @@ export default function SuggestionsPanel({
         {current && (
           <div className="flex-1 flex flex-col">
             <div
-              className={`bg-white rounded-2xl shadow-sm border border-indigo-100 p-5 flex flex-col gap-3 ${animatingIds.has(current.id) ? 'suggestion-new' : ''}`}
+              className={`rounded-2xl shadow-sm border p-5 flex flex-col gap-3 ${
+                current.isFallback
+                  ? 'bg-slate-50 border-slate-200'
+                  : 'bg-white border-indigo-100'
+              } ${animatingIds.has(current.id) ? 'suggestion-new' : ''}`}
             >
               {/* テーマタグ */}
-              <span className="inline-flex items-center self-start text-xs font-medium text-indigo-600 bg-indigo-50 px-2.5 py-1 rounded-full">
-                {current.themeName}
-              </span>
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="inline-flex items-center self-start text-xs font-medium text-indigo-600 bg-indigo-50 px-2.5 py-1 rounded-full">
+                  {current.themeName}
+                </span>
+                {current.isFallback && (
+                  <span className="inline-flex items-center gap-1 text-xs font-medium text-slate-400 bg-slate-200 px-2 py-0.5 rounded-full">
+                    <Lightbulb size={10} /> ヒント
+                  </span>
+                )}
+              </div>
 
               {/* 質問（主役） */}
-              <p className="text-xl font-bold text-slate-800 leading-snug">
+              <p className={`text-xl font-bold leading-snug ${current.isFallback ? 'text-slate-600' : 'text-slate-800'}`}>
                 {current.question}
               </p>
 
-              {/* なぜ今聞く？ 常時表示 */}
-              {current.reason && (
+              {/* なぜ今聞く？ AI生成時のみ表示 */}
+              {current.reason && !current.isFallback && (
                 <div className="bg-amber-50 border border-amber-100 rounded-xl px-3.5 py-2.5">
                   <p className="text-[11px] font-semibold text-amber-600 mb-1">なぜ今聞く？</p>
                   <p className="text-xs text-amber-800 leading-relaxed">{current.reason}</p>
@@ -192,7 +203,11 @@ export default function SuggestionsPanel({
               <div className="flex gap-2 pt-1">
                 <button
                   onClick={handleUse}
-                  className="flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-xl text-sm font-semibold bg-emerald-500 hover:bg-emerald-600 text-white transition-colors shadow-sm shadow-emerald-100"
+                  className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-xl text-sm font-semibold transition-colors shadow-sm ${
+                    current.isFallback
+                      ? 'bg-slate-600 hover:bg-slate-700 text-white shadow-slate-100'
+                      : 'bg-emerald-500 hover:bg-emerald-600 text-white shadow-emerald-100'
+                  }`}
                 >
                   <Check size={15} /> 採用して質問
                 </button>

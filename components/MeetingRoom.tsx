@@ -15,6 +15,33 @@ import ProjectSelector from './ProjectSelector'
 
 type MobileTab = 'themes' | 'suggestions' | 'transcript'
 
+function buildFallbackSuggestions(themes: Theme[], targetThemeId?: string): Suggestion[] {
+  if (targetThemeId) {
+    const theme = themes.find((t) => t.id === targetThemeId)
+    if (!theme || theme.questions.length === 0) return []
+    return theme.questions.slice(0, 3).map((q, i) => ({
+      id: `fallback-${Date.now()}-${i}`,
+      themeId: theme.id,
+      themeName: theme.name,
+      question: q,
+      status: 'pending' as const,
+      isFallback: true,
+    }))
+  }
+  return themes
+    .filter((t) => t.status === 'pending' && t.questions.length > 0)
+    .sort((a, b) => b.priority - a.priority)
+    .slice(0, 3)
+    .map((theme, i) => ({
+      id: `fallback-${Date.now()}-${i}`,
+      themeId: theme.id,
+      themeName: theme.name,
+      question: theme.questions[0],
+      status: 'pending' as const,
+      isFallback: true,
+    }))
+}
+
 export default function MeetingRoom() {
   const [themes, setThemes] = useState<Theme[]>(DEFAULT_THEMES)
   const [transcript, setTranscript] = useState<TranscriptEntry[]>([])
@@ -33,6 +60,9 @@ export default function MeetingRoom() {
   const [showProjectSelector, setShowProjectSelector] = useState(false)
   const [activeTab, setActiveTab] = useState<MobileTab>('suggestions')
   const [showTranscript, setShowTranscript] = useState(true)
+
+  const themesRef = useRef<Theme[]>(themes)
+  themesRef.current = themes
 
   const timerRef = useRef<NodeJS.Timeout | null>(null)
   const suggestionDebounceRef = useRef<NodeJS.Timeout | null>(null)
@@ -76,6 +106,13 @@ export default function MeetingRoom() {
     if (isFetchingSuggestionsRef.current) return
     isFetchingSuggestionsRef.current = true
     lastSuggestionContentRef.current = recentTranscript
+
+    setSuggestions((prev) => {
+      if (prev.some((s) => s.status === 'pending' && !s.isFallback)) return prev
+      const fallbacks = buildFallbackSuggestions(themesRef.current, targetThemeId)
+      return [...prev.filter((s) => s.status !== 'pending'), ...fallbacks]
+    })
+
     setIsLoadingSuggestions(true)
     let firstArrived = false
 
