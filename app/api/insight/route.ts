@@ -20,14 +20,18 @@ export async function POST(req: NextRequest) {
 ${recentText}
 """
 
-判明していない項目はキーを省略してください。missingItemsには未取得の重要事項を最大5件列挙してください。
+各フィールドのルール:
+- 会話から明確に判明: level="confirmed", confidence=80-95
+- 発言から推測できる: level="estimated", confidence=50-79
+- まだ不明: そのフィールドはnullにする
+- aiAlert: 今すぐ営業が聞くべき最重要事項を1文（20文字以内）で。何も優先事項がなければ省略。
 
-{"purpose":"移転目的","budget":"予算感","decisionMaker":"意思決定者","moveDate":"移転希望時期","companySize":"人数・規模","missingItems":["未取得事項"]}`
+{"purpose":{"value":"移転目的","confidence":85,"level":"confirmed"},"budget":null,"decisionMaker":{"value":"総務部長","confidence":70,"level":"estimated"},"moveDate":null,"companySize":null,"missingItems":["予算感","意思決定プロセス"],"aiAlert":"予算の話をするタイミングです"}`
 
   try {
     const message = await client.messages.create({
       model: 'claude-haiku-4-5-20251001',
-      max_tokens: 512,
+      max_tokens: 600,
       messages: [{ role: 'user', content: prompt }],
     })
 

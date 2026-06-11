@@ -79,13 +79,28 @@ export interface Suggestion {
   isFallback?: boolean
 }
 
+export type ConfidenceLevel = 'confirmed' | 'estimated' | 'missing'
+
+export interface InsightField {
+  value: string
+  confidence: number
+  level: ConfidenceLevel
+}
+
 export interface AIInsight {
-  purpose?: string
-  budget?: string
-  decisionMaker?: string
-  moveDate?: string
-  companySize?: string
+  purpose?: InsightField
+  budget?: InsightField
+  decisionMaker?: InsightField
+  moveDate?: InsightField
+  companySize?: InsightField
   missingItems: string[]
+  aiAlert?: string
+}
+
+export interface DealScore {
+  score: number
+  positives: string[]
+  warnings: string[]
 }
 
 export interface MeetingState {

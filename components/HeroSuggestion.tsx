@@ -1,24 +1,37 @@
 'use client'
 
-import { Suggestion } from '@/types/meeting'
-import { Check, Clock, X, ChevronRight, Loader2, Sparkles, Lightbulb } from 'lucide-react'
+import { Suggestion, Theme } from '@/types/meeting'
+import { Check, Clock, X, Loader2, Sparkles, Lightbulb, Bell } from 'lucide-react'
 
 interface HeroSuggestionProps {
   suggestions: Suggestion[]
+  themes: Theme[]
   isLoading: boolean
   hasContext: boolean
   usedCount: number
+  aiAlert?: string
   onUse: (id: string) => void
   onDefer: (id: string) => void
   onDismiss: (id: string) => void
   onLinkProject: () => void
 }
 
+function getImpactMessage(themeId: string, themes: Theme[]): { name: string; improvement: number; urgent: boolean } {
+  const theme = themes.find((t) => t.id === themeId)
+  if (!theme) return { name: 'この情報', improvement: 10, urgent: false }
+  if (theme.priority === 5) return { name: theme.name, improvement: 30, urgent: true }
+  if (theme.priority === 4) return { name: theme.name, improvement: 25, urgent: true }
+  if (theme.priority === 3) return { name: theme.name, improvement: 15, urgent: false }
+  return { name: theme.name, improvement: 10, urgent: false }
+}
+
 export default function HeroSuggestion({
   suggestions,
+  themes,
   isLoading,
   hasContext,
   usedCount,
+  aiAlert,
   onUse,
   onDefer,
   onDismiss,
@@ -27,11 +40,9 @@ export default function HeroSuggestion({
   const pending = suggestions.filter((s) => s.status === 'pending')
   const deferred = suggestions.filter((s) => s.status === 'deferred')
   const hero = pending[0]
-  const next = pending[1]
 
   return (
     <div className="flex flex-col h-full bg-slate-50">
-      {/* 採用済みバッジ */}
       <div className="px-6 pt-4 h-10 flex items-center">
         {usedCount > 0 && (
           <span className="flex items-center gap-1.5 text-sm text-emerald-600 font-medium">
@@ -46,6 +57,7 @@ export default function HeroSuggestion({
       </div>
 
       <div className="flex-1 flex flex-col justify-center px-6 pb-6 gap-4 overflow-y-auto">
+
         {/* 空状態 */}
         {!hero && !isLoading && (
           <div className="text-center py-12">
@@ -66,7 +78,7 @@ export default function HeroSuggestion({
           </div>
         )}
 
-        {/* ローディング中（候補なし） */}
+        {/* ローディング中 */}
         {!hero && isLoading && (
           <div className="flex flex-col items-center justify-center py-16 gap-3">
             <Loader2 size={32} className="animate-spin text-indigo-300" />
@@ -75,67 +87,88 @@ export default function HeroSuggestion({
         )}
 
         {/* ヒーローカード */}
-        {hero && (
-          <div className={`rounded-3xl border p-7 flex flex-col gap-5 shadow-lg ${
-            hero.isFallback
-              ? 'bg-slate-100 border-slate-200 shadow-slate-100'
-              : 'bg-white border-indigo-100 shadow-indigo-50'
-          }`}>
-            <div className="flex items-center justify-between">
-              <span className="text-sm font-semibold text-indigo-600 bg-indigo-50 px-3 py-1 rounded-full">
-                {hero.themeName}
-              </span>
-              {hero.isFallback && (
-                <span className="flex items-center gap-1 text-xs text-slate-400 bg-slate-200 px-2.5 py-1 rounded-full font-medium">
-                  <Lightbulb size={11} /> ヒント
+        {hero && (() => {
+          const impact = getImpactMessage(hero.themeId, themes)
+          return (
+            <div className={`rounded-3xl border flex flex-col gap-5 p-7 shadow-lg ${
+              hero.isFallback
+                ? 'bg-slate-100 border-slate-200 shadow-slate-100'
+                : 'bg-white border-indigo-100 shadow-indigo-50'
+            }`}>
+              <div className="flex items-center justify-between">
+                <span className="text-sm font-semibold text-indigo-600 bg-indigo-50 px-3 py-1 rounded-full">
+                  {hero.themeName}
                 </span>
-              )}
-            </div>
-
-            <p className={`text-2xl font-bold leading-snug ${hero.isFallback ? 'text-slate-600' : 'text-slate-800'}`}>
-              {hero.question}
-            </p>
-
-            {hero.reason && !hero.isFallback && (
-              <div className="flex items-start gap-2">
-                <span className="text-emerald-500 font-bold text-sm mt-0.5 shrink-0">✓</span>
-                <p className="text-sm text-slate-500 leading-relaxed">{hero.reason}</p>
+                {hero.isFallback && (
+                  <span className="flex items-center gap-1 text-xs text-slate-400 bg-slate-200 px-2.5 py-1 rounded-full font-medium">
+                    <Lightbulb size={11} /> ヒント
+                  </span>
+                )}
               </div>
-            )}
 
-            <button
-              onClick={() => onUse(hero.id)}
-              className="w-full py-4 rounded-2xl text-lg font-bold bg-emerald-500 hover:bg-emerald-600 active:bg-emerald-700 text-white transition-colors shadow-sm flex items-center justify-center gap-2"
-            >
-              <Check size={20} /> この質問をする
-            </button>
+              {/* インパクトバナー */}
+              {!hero.isFallback && (
+                <div className={`rounded-2xl px-4 py-3 ${
+                  impact.urgent
+                    ? 'bg-gradient-to-br from-red-50 to-orange-50 border border-red-100'
+                    : 'bg-gradient-to-br from-indigo-50 to-blue-50 border border-indigo-100'
+                }`}>
+                  <p className={`text-sm font-bold mb-0.5 ${impact.urgent ? 'text-red-500' : 'text-indigo-500'}`}>
+                    {impact.urgent ? '🔥' : '💡'} 次は{impact.name}を聞くと
+                  </p>
+                  <p className={`font-black leading-none ${impact.urgent ? 'text-red-600' : 'text-indigo-600'}`}>
+                    <span className="text-3xl tabular-nums">{impact.improvement}%</span>
+                    <span className="text-lg ml-1">提案精度が向上します</span>
+                  </p>
+                </div>
+              )}
 
-            <div className="flex gap-2">
+              {/* 質問（主役） */}
+              <p className={`text-2xl font-bold leading-snug ${hero.isFallback ? 'text-slate-600' : 'text-slate-800'}`}>
+                {hero.question}
+              </p>
+
+              {/* AIの理由 */}
+              {hero.reason && !hero.isFallback && (
+                <div className="flex items-start gap-2">
+                  <span className="text-emerald-500 font-bold text-sm mt-0.5 shrink-0">✓</span>
+                  <p className="text-sm text-slate-500 leading-relaxed">{hero.reason}</p>
+                </div>
+              )}
+
               <button
-                onClick={() => onDefer(hero.id)}
-                className="flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-xl text-sm font-medium text-slate-500 bg-slate-100 hover:bg-slate-200 transition-colors"
+                onClick={() => onUse(hero.id)}
+                className="w-full py-4 rounded-2xl text-lg font-bold bg-emerald-500 hover:bg-emerald-600 active:bg-emerald-700 text-white transition-colors shadow-sm flex items-center justify-center gap-2"
               >
-                <Clock size={14} /> あとで聞く
+                <Check size={20} /> この質問をする
               </button>
-              <button
-                onClick={() => onDismiss(hero.id)}
-                className="flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-xl text-sm font-medium text-slate-400 bg-white border border-slate-200 hover:bg-slate-50 transition-colors"
-              >
-                <X size={14} /> 今回は不要
-              </button>
-            </div>
-          </div>
-        )}
 
-        {/* 次の候補プレビュー */}
-        {next && (
-          <div className="flex items-center gap-3 px-4 py-3 bg-white rounded-2xl border border-slate-100">
-            <div className="w-1 h-8 bg-indigo-200 rounded-full shrink-0" />
-            <div className="min-w-0 flex-1">
-              <p className="text-xs text-slate-400 mb-0.5">次の候補</p>
-              <p className="text-sm font-medium text-slate-600 truncate">{next.question}</p>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => onDefer(hero.id)}
+                  className="flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-xl text-sm font-medium text-slate-500 bg-slate-100 hover:bg-slate-200 transition-colors"
+                >
+                  <Clock size={14} /> あとで聞く
+                </button>
+                <button
+                  onClick={() => onDismiss(hero.id)}
+                  className="flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-xl text-sm font-medium text-slate-400 bg-white border border-slate-200 hover:bg-slate-50 transition-colors"
+                >
+                  <X size={14} /> 今回は不要
+                </button>
+              </div>
             </div>
-            <ChevronRight size={16} className="text-slate-300 shrink-0" />
+          )
+        })()}
+
+        {/* AIからの通知（次の候補の代わり） */}
+        {aiAlert && hero && (
+          <div className="flex items-start gap-3 px-4 py-3 bg-amber-50 rounded-2xl border border-amber-100">
+            <Bell size={14} className="text-amber-500 mt-0.5 shrink-0" />
+            <div>
+              <p className="text-xs font-bold text-amber-600 mb-0.5">AIからの提案</p>
+              <p className="text-sm text-amber-800">{aiAlert}</p>
+            </div>
           </div>
         )}
 

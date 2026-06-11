@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useCallback, useEffect, useRef } from 'react'
-import { Theme, ThemeStatus, TranscriptEntry, Suggestion, ThemeCoverage, MeetingFeedback, MeetingContext, SessionRecord, AIInsight, DEFAULT_THEMES } from '@/types/meeting'
+import { Theme, ThemeStatus, TranscriptEntry, Suggestion, ThemeCoverage, MeetingFeedback, MeetingContext, SessionRecord, AIInsight, DealScore, DEFAULT_THEMES } from '@/types/meeting'
 import { useDeepgramTranscription } from '@/hooks/useDeepgramTranscription'
 import { loadProjectHistory, saveSessionRecord } from '@/lib/projectHistory'
 import { Flame, Brain, Sparkles } from 'lucide-react'
@@ -320,6 +320,21 @@ export default function MeetingRoom() {
 
   const usedCount = suggestions.filter((s) => s.status === 'used').length
 
+  const dealScore: DealScore | null = (() => {
+    if (transcript.length < 5) return null
+    const essential = themes.filter((t) => t.priority === 5)
+    const confirmedEssential = essential.filter((t) => t.status === 'confirmed')
+    const uncoveredEssential = essential.filter((t) => t.status !== 'confirmed')
+    const coveredCount = coverage.filter((c) => c.coveredPercent >= 50).length
+    let score = 40
+    score += confirmedEssential.length * 15
+    score += Math.min(20, coveredCount * 4)
+    score = Math.min(92, score)
+    const positives = confirmedEssential.map((t) => `${t.name}を把握`)
+    const warnings = uncoveredEssential.slice(0, 2).map((t) => `${t.name}未取得`)
+    return { score, positives, warnings }
+  })()
+
   return (
     <div className="flex flex-col h-screen bg-slate-50">
       <RecordingControls
@@ -349,9 +364,11 @@ export default function MeetingRoom() {
         <div className="overflow-hidden">
           <HeroSuggestion
             suggestions={suggestions}
+            themes={themes}
             isLoading={isLoadingSuggestions}
             hasContext={meetingContext !== null}
             usedCount={usedCount}
+            aiAlert={insight?.aiAlert}
             onUse={handleUseSuggestion}
             onDefer={handleDeferSuggestion}
             onDismiss={handleDismissSuggestion}
@@ -364,6 +381,7 @@ export default function MeetingRoom() {
             transcript={transcript}
             isRecording={isListening}
             isLoading={isLoadingInsight}
+            dealScore={dealScore}
           />
         </div>
       </div>
@@ -382,9 +400,11 @@ export default function MeetingRoom() {
           {activeTab === 'suggestion' && (
             <HeroSuggestion
               suggestions={suggestions}
+              themes={themes}
               isLoading={isLoadingSuggestions}
               hasContext={meetingContext !== null}
               usedCount={usedCount}
+              aiAlert={insight?.aiAlert}
               onUse={handleUseSuggestion}
               onDefer={handleDeferSuggestion}
               onDismiss={handleDismissSuggestion}
@@ -397,6 +417,7 @@ export default function MeetingRoom() {
               transcript={transcript}
               isRecording={isListening}
               isLoading={isLoadingInsight}
+              dealScore={dealScore}
             />
           )}
         </div>

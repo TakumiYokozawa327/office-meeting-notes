@@ -38,12 +38,18 @@ export default function HearingProgress({
   const preferred = themes.filter((t) => t.priority >= 3 && t.priority < 5)
   const optional = themes.filter((t) => t.priority < 3)
   const uncoveredEssential = essential.filter((t) => t.status !== 'confirmed').length
-  const canPropose = score >= 60
+
+  const stage =
+    score >= 85 ? { label: '詳細提案可能', color: 'text-emerald-600', dot: 'bg-emerald-500' } :
+    score >= 60 ? { label: '概算提案可能', color: 'text-emerald-600', dot: 'bg-emerald-500' } :
+    score >= 40 ? { label: '深掘り中',     color: 'text-indigo-600',  dot: 'bg-indigo-500'  } :
+    score >= 20 ? { label: '情報収集中',   color: 'text-amber-600',   dot: 'bg-amber-500'   } :
+                  { label: '商談開始',     color: 'text-slate-500',   dot: 'bg-slate-400'   }
 
   const barColor =
-    score >= 80 ? 'bg-emerald-500' :
-    score >= 60 ? 'bg-indigo-500' :
-    score >= 30 ? 'bg-amber-500' : 'bg-slate-300'
+    score >= 60 ? 'bg-emerald-500' :
+    score >= 40 ? 'bg-indigo-500'  :
+    score >= 20 ? 'bg-amber-500'   : 'bg-slate-300'
 
   const ThemeRow = ({ theme }: { theme: Theme }) => {
     const cov = coverage.find((c) => c.themeId === theme.id)
@@ -86,26 +92,22 @@ export default function HearingProgress({
   return (
     <div className="flex flex-col h-full">
       <div className="p-4 border-b border-slate-200 bg-white">
-        <div className="mb-3">
-          <p className="text-xs text-slate-400 font-medium mb-1">ヒアリング充実度</p>
-          <div className="flex items-center gap-2">
-            <p className="text-4xl font-bold text-slate-800 tabular-nums leading-none">{score}%</p>
-            <span className={`text-xs font-semibold px-2 py-0.5 rounded-full border whitespace-nowrap ${
-              canPropose
-                ? 'text-emerald-600 bg-emerald-50 border-emerald-200'
-                : 'text-amber-600 bg-amber-50 border-amber-200'
-            }`}>
-              {canPropose ? '提案可 ✓' : `あと${uncoveredEssential}項目`}
-            </span>
-          </div>
+        <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">提案準備状況</p>
+        <div className="flex items-center gap-2 mb-2">
+          <span className={`w-2 h-2 rounded-full shrink-0 ${stage.dot}`} />
+          <span className={`text-base font-bold ${stage.color}`}>{stage.label}</span>
         </div>
-        <div className="h-2.5 bg-slate-100 rounded-full overflow-hidden">
+        <div className="h-2 bg-slate-100 rounded-full overflow-hidden mb-1.5">
           <div
             className={`h-full rounded-full transition-all duration-700 ${barColor}`}
-            style={{ width: `${score}%` }}
+            style={{ width: `${Math.max(score, 3)}%` }}
           />
         </div>
-        <p className="text-xs text-slate-400 mt-1.5">{confirmed}項目確認済み / 全{themes.length}項目</p>
+        <p className="text-xs text-slate-400">
+          {uncoveredEssential > 0
+            ? `あと${uncoveredEssential}項目で概算提案可能`
+            : `${confirmed}項目確認済み`}
+        </p>
       </div>
 
       <div className="flex-1 overflow-y-auto p-4 space-y-5">
